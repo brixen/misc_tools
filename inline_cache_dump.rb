@@ -79,7 +79,7 @@ class InlineCacheDump
     end
 
     File.open "inline_cache_#{Process.pid}.json", "w" do |f|
-      start = false
+      start = true
       map.each do |k, v|
         start ? f.puts("[") || start = false : f.puts(",")
 
