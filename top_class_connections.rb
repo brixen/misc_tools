@@ -1,5 +1,4 @@
 require 'json'
-require 'csv'
 
 def sum(a)
   a.inject(0) { |s, i| s + i }
@@ -10,61 +9,67 @@ output = ARGV.shift
 
 puts "Importing #{input}..."
 data = JSON.parse File.read(input)
-puts "Done"
-id = data.size + 1
 
+puts "Normalizing class names..."
+data.each do |x|
+  i = x["class_name"].index "::"
+  x["class_name"].slice! i..-1 if i
+end
+
+puts "Summing method calls per class..."
 classes = Hash.new { |h,k| h[k] = 0 }
-
 data.each do |x|
   classes[x["class_name"]] += sum(x["calls"])
 end
 
-classes = Hash[*classes.sort { |a, b| b.last <=> a.last }.flatten]
-
+puts "Extracting top 20 classes..."
+classes = Hash[*classes.sort { |a, b| b.last <=> a.last }.flatten.first(40)]
 top_classes = data.select { |x| classes.key? x["class_name"] }
 
-methods = Hash.new { |h,k| h[k] = [] }
-
+puts "Extracting top 10 methods per class..."
+methods = Hash.new { |h,k| h[k] = Hash.new { |h,k| h[k] = 0 } }
 top_classes.each do |x|
-  methods[x["class_name"]] << [sum(x["calls"]), x["method_name"]]
+  methods[x["class_name"]][x["method_name"]] += sum(x["calls"])
 end
 
-methods.each { |k,v| v.sort! { |a, b| b.first <=> a.first }.slice! 10..-1 }
+methods = methods.inject({}) do |ac, x|
+  ac[x.first] = x.last.sort { |a,b| b.last <=> a.last }.first(10).map(&:first)
+  ac
+end
 
 top_methods = top_classes.select do |x|
-  v = methods[x["class_name"]]
-  v and v.map { |c, m| m}.include? x["method_name"]
+  methods[x["class_name"]].include? x["method_name"]
 end
 
-unknown = Hash.new { |h,k| h[k] = { id: (id+=1), method_name: "unknown" } }
-
-ids = data.inject({}) { |ac, x| ac[x[:id]] = x }
-
-array = []
+puts "Generating final table..."
+ids = data.inject({}) { |ac, x| ac[x["id"]] = x; ac }
+table = []
 top_methods.each do |x|
-  record = [x["id"], x["class_name"], x["method_name"], x["type"]]
+  mc = x["method_ids"].zip(x["calls"]).sort { |a, b| b.last <=> a.last }.first(5)
 
-  x["method_ids"].zip(x["calls"]).each do |y|
-    array << record + y
+  mc.each do |y|
+    table << {
+      "id" => x["id"],
+      "class_name" => x["class_name"],
+      "method_name" => x["method_name"],
+      "type" => x["type"],
+      "method_id" => (ids.key?(y.first) ? y.first : 0),
+      "calls" => y.last
+    }
   end
 end
 
-class_names = top_classes.inject({}) { |ac, x| ac[x["class_name"]] = x }
-
-array.each do |x|
-  callee = ids[x[4]]
-  next if callee
-
-  if class_names.key? x[1]
-    x[4] = unknown[x[i]][:id]
-  else
-    x[4] = unknown[:Unknown][:id]
-  end
+puts "Sorting table..."
+table.sort! do |a, b|
+  a_name = "#{a["class_name"]}#{a["method_name"]}"
+  b_name = "#{b["class_name"]}#{b["method_name"]}"
+  a_name <=> b_name
 end
 
+puts "Writing #{output}..."
 File.open output, "w" do |f|
   f.puts %["id","class_name","method_name","type","method_id","calls"]
-  array.each do |x|
-    f.puts %[#{x[0]},"#{x[1]}","#{x[2]}",#{x[3]},#{x[4]}]
+  table.each do |x|
+    f.puts %[#{x["id"]},"#{x["class_name"]}","#{x["method_name"]}",#{x["type"]},#{x["method_id"]},#{x["calls"]}]
   end
 end
